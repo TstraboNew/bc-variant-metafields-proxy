@@ -1,6 +1,7 @@
 // File: api/variant-metafields-sf.js
 // GET /api/variant-metafields-sf?productId=1348
-// Reads variant metafields via Storefront GraphQL (works even if metafields use write_and_sf_access)
+// Reads variant metafields via Storefront GraphQL (works with write_and_sf_access)
+// Auth: Use ONLY X-Auth-Token (Storefront API token). Do NOT send Authorization: Bearer.
 
 const BC_STORE_HASH = process.env.BC_STORE_HASH; // e.g., nd9gle6d6h
 const BC_SF_TOKEN  = process.env.BC_SF_TOKEN;   // Storefront API token (channel-specific)
@@ -17,7 +18,7 @@ module.exports = async (req, res) => {
       return res.status(405).json({ error: 'Method not allowed' });
     }
 
-    // TEMP debug gate to confirm the env is set correctly
+    // TEMP: debug gate to confirm env vars — remove once verified
     if (req.query.debug === 'env') {
       const token = BC_SF_TOKEN || '';
       const masked = token ? `${token.slice(0, 4)}…${token.slice(-4)}` : '';
@@ -76,9 +77,8 @@ module.exports = async (req, res) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // Send both auth styles; some configurations prefer Authorization: Bearer
+        // IMPORTANT: Use ONLY the Storefront API token header.
         'X-Auth-Token': BC_SF_TOKEN,
-        'Authorization': `Bearer ${BC_SF_TOKEN}`,
       },
       body: JSON.stringify({ query, variables }),
     });
