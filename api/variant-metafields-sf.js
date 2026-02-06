@@ -1,13 +1,13 @@
 // File: api/variant-metafields-sf.js
 // GET /api/variant-metafields-sf?productId=1348
-// Reads variant metafields via Storefront GraphQL (works with write_and_sf_access)
+// Reads variant metafields via Storefront GraphQL (works even if metafields use write_and_sf_access)
 
 const BC_STORE_HASH = process.env.BC_STORE_HASH; // e.g., nd9gle6d6h
 const BC_SF_TOKEN  = process.env.BC_SF_TOKEN;   // Storefront API token (channel-specific)
 const GQL_ENDPOINT = (hash) => `https://store-${hash}.mybigcommerce.com/graphql`;
 
 // Customize to your fields
-const NAMESPACE = 'SecondaryDesc';
+const NAMESPACE   = 'SecondaryDesc';
 const TARGET_KEYS = ['Secondary Attribute Description'];
 
 module.exports = async (req, res) => {
@@ -15,6 +15,18 @@ module.exports = async (req, res) => {
     if (req.method !== 'GET') {
       res.setHeader('Allow', 'GET');
       return res.status(405).json({ error: 'Method not allowed' });
+    }
+
+    // TEMP debug gate to confirm the env is set correctly
+    if (req.query.debug === 'env') {
+      const token = BC_SF_TOKEN || '';
+      const masked = token ? `${token.slice(0, 4)}…${token.slice(-4)}` : '';
+      return res.status(200).json({
+        hasStoreHash: !!BC_STORE_HASH,
+        hasSfToken: !!BC_SF_TOKEN,
+        tokenPreview: masked,
+        note: "If hasSfToken=false or tokenPreview is empty after redeploy, check Vercel env scope/project."
+      });
     }
 
     const id = Number(req.query.productId);
@@ -64,7 +76,9 @@ module.exports = async (req, res) => {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Auth-Token': BC_SF_TOKEN, // Storefront API token
+        // Send both auth styles; some configurations prefer Authorization: Bearer
+        'X-Auth-Token': BC_SF_TOKEN,
+        'Authorization': `Bearer ${BC_SF_TOKEN}`,
       },
       body: JSON.stringify({ query, variables }),
     });
