@@ -1,37 +1,69 @@
-// Vercel serverless function: /api/variant-metafields
-// Returns a safe subset of variant metafields for a product.
-
 const BC_STORE_HASH = process.env.BC_STORE_HASH;
 const BC_ADMIN_TOKEN = process.env.BC_ADMIN_TOKEN;
 
-// Customize these to your actual metafields
 const NAMESPACE = 'SecondaryDesc';
-const TARGET_KEY = 'Secondary Attribute Description';
 
 export default async function handler(req, res) {
   try {
     const { productId } = req.query;
     const id = Number(productId);
+
+    if (!BC_STORE_HASH || !BC_ADMIN_TOKEN) {
+      return res.status(500).json({
+        error: 'Server env not set',
+        details: {
+          hasStoreHash: !!BC_STORE_HASH,
+          hasAdminToken: !!BC_ADMIN_TOKEN,
+        },
+      });
+    }
+
     if (!id) {
       return res.status(400).json({ error: 'Missing or invalid productId' });
     }
 
-    const url = `https://api.bigcommerce.com/stores/${BC_STORE_HASH}/v3/catalog/products/${id}/variants?include=metafields&limit=250`;
-
-    const r = await fetch(url, {
+    // 1) Sanity-check the product exists
+    const productUrl = `https://api.bigcommerce.com/stores/${BC_STORE_HASH}/v3/catalog/products/${id}`;
+    const p = await fetch(productUrl, {
       headers: {
         'X-Auth-Token': BC_ADMIN_TOKEN,
         'Accept': 'application/json',
-        'Content-Type': 'application/json',
+      },
+    });
+    const productText = await p.text();
+
+    if (!p.ok) {
+      return res.status(p.status).json({
+        error: 'BigCommerce product fetch failed',
+        request: productUrl,
+        status: p.status,
+        body: productText,
+        hint: 'If status=404, your BC_STORE_HASH is likely wrong or productId does not exist.',
+      });
+    }
+
+    // 2) Fetch variants + metafields
+    const variantsUrl = `https://api.bigcommerce.com/stores/${BC_STORE_HASH}/v3/catalog/products/${id}/variants?include=metafields&limit=250`;
+    const r = await fetch(variantsUrl, {
+      headers: {
+        'X-Auth-Token': BC_ADMIN_TOKEN,
+        'Accept': 'application/json',
       },
     });
 
+    const variantsText = await r.text();
+
     if (!r.ok) {
-      const text = await r.text();
-      return res.status(r.status).json({ error: 'BigCommerce API error', details: text });
+      return res.status(r.status).json({
+        error: 'BigCommerce variants+metafields fetch failed',
+        request: variantsUrl,
+        status: r.status,
+        body: variantsText,
+        hint: '404 here usually means the store hash is wrong. Verify BC_STORE_HASH is the short hash from your admin URL (no "store-" prefix).',
+      });
     }
 
-    const json = await r.json();
+    const json = JSON.parse(variantsText);
 
     const variants = (json?.data ?? []).map(v => {
       const fields = {};
@@ -41,9 +73,9 @@ export default async function handler(req, res) {
         }
       });
       return {
-        variantId: v.id,  // Admin API numeric id
+        variantId: v.id,
         sku: v.sku,
-        fields,           // e.g., { "Secondary Attribute Description": "<p>..</p>|10952" }
+        fields,
       };
     });
 
