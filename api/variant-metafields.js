@@ -1,10 +1,18 @@
+// File: api/variant-metafields.js
+// Vercel Serverless Function: GET /api/variant-metafields?productId=1538
+
 const BC_STORE_HASH = process.env.BC_STORE_HASH;
 const BC_ADMIN_TOKEN = process.env.BC_ADMIN_TOKEN;
 
-const NAMESPACE = 'SecondaryDesc';
+const BASE = `https://api.bigcommerce.com/stores`;
 
-export default async function handler(req, res) {
+module.exports = async (req, res) => {
   try {
+    if (req.method !== 'GET') {
+      res.setHeader('Allow', 'GET');
+      return res.status(405).json({ error: 'Method not allowed' });
+    }
+
     const { productId } = req.query;
     const id = Number(productId);
 
@@ -22,66 +30,38 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Missing or invalid productId' });
     }
 
-    // 1) Sanity-check the product exists
-    const productUrl = `https://api.bigcommerce.com/stores/${BC_STORE_HASH}/v3/catalog/products/${id}`;
-    const p = await fetch(productUrl, {
-      headers: {
-        'X-Auth-Token': BC_ADMIN_TOKEN,
-        'Accept': 'application/json',
-      },
-    });
-    const productText = await p.text();
+    const headers = {
+      'X-Auth-Token': BC_ADMIN_TOKEN,
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
+    };
 
+    // 1) Sanity-check the product exists
+    const productUrl = `${BASE}/${BC_STORE_HASH}/v3/catalog/products/${id}`;
+    const p = await fetch(productUrl, { headers });
+    const productText = await p.text();
     if (!p.ok) {
       return res.status(p.status).json({
         error: 'BigCommerce product fetch failed',
         request: productUrl,
         status: p.status,
         body: productText,
-        hint: 'If status=404, your BC_STORE_HASH is likely wrong or productId does not exist.',
+        hint: 'If status=404, product ID may not exist in this store. If 401/403, token or scopes.',
       });
     }
 
-    // 2) Fetch variants + metafields
-    const variantsUrl = `https://api.bigcommerce.com/stores/${BC_STORE_HASH}/v3/catalog/products/${id}/variants?include=metafields&limit=250`;
-    const r = await fetch(variantsUrl, {
-      headers: {
-        'X-Auth-Token': BC_ADMIN_TOKEN,
-        'Accept': 'application/json',
-      },
-    });
-
-    const variantsText = await r.text();
-
-    if (!r.ok) {
-      return res.status(r.status).json({
-        error: 'BigCommerce variants+metafields fetch failed',
+    // 2) Get variants for this product
+    const variantsUrl = `${BASE}/${BC_STORE_HASH}/v3/catalog/products/${id}/variants?limit=250`;
+    const vRes = await fetch(variantsUrl, { headers });
+    const vText = await vRes.text();
+    if (!vRes.ok) {
+      return res.status(vRes.status).json({
+        error: 'BigCommerce variants fetch failed',
         request: variantsUrl,
-        status: r.status,
-        body: variantsText,
-        hint: '404 here usually means the store hash is wrong. Verify BC_STORE_HASH is the short hash from your admin URL (no "store-" prefix).',
+        status: vRes.status,
+        body: vText,
       });
     }
+    const vJson = JSON.parse(vText);
+    const variants = Array.isArray(vJson?.data) ? vJson.data : [];
 
-    const json = JSON.parse(variantsText);
-
-    const variants = (json?.data ?? []).map(v => {
-      const fields = {};
-      (v?.metafields ?? []).forEach(mf => {
-        if (mf.namespace === NAMESPACE) {
-          fields[mf.key] = mf.value;
-        }
-      });
-      return {
-        variantId: v.id,
-        sku: v.sku,
-        fields,
-      };
-    });
-
-    res.setHeader('Cache-Control', 'public, max-age=60, s-maxage=60, stale-while-revalidate=300');
-    return res.status(200).json({ productId: id, namespace: NAMESPACE, variants });
-  } catch (err) {
-    return res.status(500).json({ error: 'Server error', details: err?.message || String(err) });
-  }
-}
